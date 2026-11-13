@@ -54,4 +54,14 @@ check "登出" "$(curl -s -o /dev/null -w '%{http_code}' -H "$H" -d '{}' $api/ap
 check "登出后令牌失效" "$(curl -s -o /dev/null -w '%{http_code}' -H "$H" -d '{}' $api/api/currentUser)" "401"
 
 kill -TERM "$pid"; wait "$pid" && echo "OK  收到 SIGTERM 后正常退出" || { echo "FAIL 退出码 $?"; fail=1; }
+# ── HTTPS（自备证书）：API 走 TLS，明文端口只听本机 ──
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=localhost" -keyout "$work/key.pem" -out "$work/cert.pem" >/dev/null 2>&1
+"$bin" --data-dir "$work/data2" --tls-cert "$work/cert.pem" --tls-key "$work/key.pem" --https-port 21443 >"$work/log2" 2>&1 &
+pid=$!
+for _ in $(seq 1 30); do ss -ltn | grep -q ':21443 ' && break; sleep 1; done
+check "HTTPS healthz" "$(curl -sk https://127.0.0.1:21443/healthz)" "ok"
+check "明文 API 仅监听本机" "$(ss -ltn | awk '$4 ~ /:21114$/ {print $4}' | sort -u | tr '\n' ' ')" "127.0.0.1:21114 "
+kill -TERM "$pid"; wait "$pid" || true
+tail -5 "$work/log2"
+
 exit $fail

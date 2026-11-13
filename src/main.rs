@@ -36,7 +36,13 @@ MyDesk 单文件服务端
   --host <HOST>       对外域名或 IP，用于告知客户端中继地址，例如 rd.example.com
   --port <PORT>       信令基准端口，默认 21116（占用 21115/21116/21118）
   --relay-port <PORT> 中继端口，默认 21117（占用 21117/21119）
-  --api-port <PORT>   账号 API 端口，默认 21114（客户端默认按 信令端口-2 推导）
+  --api-port <PORT>   账号 API 明文端口，默认 21114（开启 HTTPS 后仅监听本机）
+  --domain <DOMAIN>   开启 HTTPS 并自动申请 Let's Encrypt 证书（需公网可访问 443）
+  --acme-email <EMAIL>
+                      （可选）证书到期提醒邮箱
+  --tls-cert <FILE> --tls-key <FILE>
+                      使用自备证书开启 HTTPS（与 --domain 二选一）
+  --https-port <PORT> HTTPS 端口，默认 443
   --reset-password <用户名>
                       重置该用户密码并打印新密码后退出
   --bind <IP>         监听地址，默认所有网卡
@@ -45,7 +51,8 @@ MyDesk 单文件服务端
   -V, --version       显示版本
 
 每个选项也可用环境变量设置：MYDESK_DATA_DIR、MYDESK_HOST、MYDESK_PORT、
-MYDESK_RELAY_PORT、MYDESK_API_PORT、MYDESK_BIND、MYDESK_OPEN_KEY=1。命令行优先。";
+MYDESK_RELAY_PORT、MYDESK_API_PORT、MYDESK_DOMAIN、MYDESK_ACME_EMAIL、
+MYDESK_TLS_CERT、MYDESK_TLS_KEY、MYDESK_HTTPS_PORT、MYDESK_BIND、MYDESK_OPEN_KEY=1。命令行优先。";
 
 /// 账号数据库文件名（位于数据目录）。
 const DB_FILE: &str = "mydesk.db";
@@ -58,6 +65,11 @@ struct Options {
     port: i32,
     relay_port: i32,
     api_port: u16,
+    domain: String,
+    acme_email: String,
+    tls_cert: String,
+    tls_key: String,
+    https_port: u16,
     bind: String,
     open_key: bool,
     reset_password: Option<String>,
@@ -73,6 +85,11 @@ impl Options {
             port: env("MYDESK_PORT").map(|v| v.parse()).transpose()?.unwrap_or(21116),
             relay_port: env("MYDESK_RELAY_PORT").map(|v| v.parse()).transpose()?.unwrap_or(21117),
             api_port: env("MYDESK_API_PORT").map(|v| v.parse()).transpose()?.unwrap_or(21114),
+            domain: env("MYDESK_DOMAIN").unwrap_or_default(),
+            acme_email: env("MYDESK_ACME_EMAIL").unwrap_or_default(),
+            tls_cert: env("MYDESK_TLS_CERT").unwrap_or_default(),
+            tls_key: env("MYDESK_TLS_KEY").unwrap_or_default(),
+            https_port: env("MYDESK_HTTPS_PORT").map(|v| v.parse()).transpose()?.unwrap_or(443),
             bind: env("MYDESK_BIND").unwrap_or_default(),
             open_key: env("MYDESK_OPEN_KEY").as_deref() == Some("1"),
             reset_password: None,
@@ -95,6 +112,11 @@ impl Options {
                 "--port" => opts.port = value(&name)?.parse()?,
                 "--relay-port" => opts.relay_port = value(&name)?.parse()?,
                 "--api-port" => opts.api_port = value(&name)?.parse()?,
+                "--domain" => opts.domain = value(&name)?,
+                "--acme-email" => opts.acme_email = value(&name)?,
+                "--tls-cert" => opts.tls_cert = value(&name)?,
+                "--tls-key" => opts.tls_key = value(&name)?,
+                "--https-port" => opts.https_port = value(&name)?.parse()?,
                 "--reset-password" => opts.reset_password = Some(value(&name)?),
                 "--bind" => opts.bind = value(&name)?,
                 "--open-key" => opts.open_key = true,
@@ -112,12 +134,29 @@ impl Options {
         if opts.port < 3 || opts.relay_port < 3 {
             bail!("端口不合法");
         }
+        if opts.tls_cert.is_empty() != opts.tls_key.is_empty() {
+            bail!("--tls-cert 与 --tls-key 需同时提供");
+        }
+        if !opts.domain.is_empty() && !opts.tls_cert.is_empty() {
+            bail!("--domain（自动证书）与 --tls-cert（自备证书）只能二选一");
+        }
+        // 自备证书路径按启动目录解析（之后会切换到数据目录）
+        for p in [&mut opts.tls_cert, &mut opts.tls_key] {
+            if !p.is_empty() {
+                *p = std::fs::canonicalize(&*p)
+                    .map_err(|e| hbb_common::anyhow::anyhow!("证书文件 {} 无法读取: {e}", p))?
+                    .display()
+                    .to_string();
+            }
+        }
         Ok(opts)
     }
 }
 
 fn main() -> ResultType<()> {
     let opts = Options::parse()?;
+    // rustls 0.23 需要进程级加密实现；统一用 ring（无需 cmake/NASM）
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let _logger = Logger::try_with_env_or_str("info")?
         .log_to_stdout()
         .format(opt_format)
@@ -158,10 +197,24 @@ fn main() -> ResultType<()> {
         let _ = t.send(("信令服务", r));
     })?;
 
-    let api_addr = std::net::SocketAddr::new(bind_addr.unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)), opts.api_port);
+    let any_ip = bind_addr.unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+    let tls = if !opts.domain.is_empty() {
+        api::Tls::Acme { domain: opts.domain.clone(), email: opts.acme_email.clone() }
+    } else if !opts.tls_cert.is_empty() {
+        api::Tls::Files { cert: opts.tls_cert.clone(), key: opts.tls_key.clone() }
+    } else {
+        log::warn!("账号 API 未开启 HTTPS：共享设备库含托管密码，生产环境请使用 --domain 或 --tls-cert");
+        api::Tls::Off
+    };
+    let serve_cfg = api::ServeConfig {
+        http_addr: std::net::SocketAddr::new(any_ip, opts.api_port),
+        https_addr: std::net::SocketAddr::new(any_ip, opts.https_port),
+        tls,
+        db_path: DB_FILE.to_owned(),
+    };
     let t = tx.clone();
     std::thread::Builder::new().name("api".into()).spawn(move || {
-        let r = api::serve_blocking(api_addr, DB_FILE.to_owned());
+        let r = api::serve_blocking(serve_cfg);
         let _ = t.send(("账号 API", r));
     })?;
 

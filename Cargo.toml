@@ -31,6 +31,10 @@ sqlx = { version = "0.6", features = ["runtime-tokio-rustls", "sqlite"] }
 argon2 = "0.5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# HTTPS：自动申请 Let's Encrypt 证书（TLS-ALPN-01，仅需 443 端口），或加载自备证书。用 ring，免 cmake/NASM。
+rustls-acme = { version = "0.15", default-features = false, features = ["axum", "ring", "tls12", "webpki-roots"] }
+axum-server = { version = "0.8", features = ["tls-rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "tls12", "std", "logging"] }
 
 # 静态编译 OpenSSL：交叉编译容器与目标服务器都无需安装 libssl。
 # 上游 hbbs 的 build.rs 以 hbb_common 为构建依赖，宿主侧同样需要，故两处都开 vendored。

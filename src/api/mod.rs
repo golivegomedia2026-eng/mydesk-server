@@ -163,16 +163,77 @@ pub fn router(app: Arc<App>) -> Router {
         .with_state(app)
 }
 
+/// API 的 TLS 模式。
+#[derive(Debug, Clone)]
+pub enum Tls {
+    /// 仅 HTTP（内网测试或前置反向代理时用）
+    Off,
+    /// 自动向 Let's Encrypt 申请/续期证书（TLS-ALPN-01，需 443 可从公网访问）
+    Acme { domain: String, email: String },
+    /// 自备证书（PEM）
+    Files { cert: String, key: String },
+}
+
+/// API 监听配置。
+#[derive(Debug, Clone)]
+pub struct ServeConfig {
+    pub http_addr: SocketAddr,
+    pub https_addr: SocketAddr,
+    pub tls: Tls,
+    pub db_path: String,
+}
+
 /// 在当前线程新建 tokio 运行时并运行 API 服务（数据库连接池须与使用它的运行时同属一个）。
-pub fn serve_blocking(addr: SocketAddr, db_path: String) -> ResultType<()> {
+/// 开启 TLS 时，明文 HTTP 只监听本机回环地址，避免托管密码明文过网。
+pub fn serve_blocking(cfg: ServeConfig) -> ResultType<()> {
     let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(4).enable_all().build()?;
     rt.block_on(async move {
-        let db = crate::store::open(&db_path).await?;
+        let db = crate::store::open(&cfg.db_path).await?;
         crate::bootstrap::ensure_admin(&db).await?;
         let app = Arc::new(App { db, vault: Vault::load_or_create()?, login_failures: Mutex::default() });
-        let listener = tokio::net::TcpListener::bind(addr).await?;
-        log::info!("账号 API 监听 http://{}", addr);
-        axum::serve(listener, router(app).into_make_service_with_connect_info::<SocketAddr>()).await?;
+        let make = || router(app.clone()).into_make_service_with_connect_info::<SocketAddr>();
+        let (svc_http, svc_https) = (make(), make());
+
+        let mut http_addr = cfg.http_addr;
+        if !matches!(cfg.tls, Tls::Off) {
+            http_addr.set_ip(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+        }
+        let listener = tokio::net::TcpListener::bind(http_addr).await?;
+        log::info!("账号 API 监听 http://{}", http_addr);
+        let http = async move { axum::serve(listener, svc_http).await.map_err(hbb_common::anyhow::Error::from) };
+
+        let https = async move {
+            match &cfg.tls {
+                Tls::Off => std::future::pending::<ResultType<()>>().await,
+                Tls::Files { cert, key } => {
+                    let tls = axum_server::tls_rustls::RustlsConfig::from_pem_file(cert, key).await?;
+                    log::info!("账号 API 监听 https://{}（自备证书）", cfg.https_addr);
+                    axum_server::bind_rustls(cfg.https_addr, tls).serve(svc_https).await?;
+                    Ok(())
+                }
+                Tls::Acme { domain, email } => {
+                    use hbb_common::futures::StreamExt;
+                    let mut state = rustls_acme::AcmeConfig::new([domain.as_str()])
+                        .contact(Some(email).filter(|e| !e.is_empty()).map(|e| format!("mailto:{e}")))
+                        .cache(rustls_acme::caches::DirCache::new("acme"))
+                        .directory_lets_encrypt(true)
+                        .state();
+                    let acceptor = state.axum_acceptor(state.default_rustls_config());
+                    tokio::spawn(async move {
+                        while let Some(ev) = state.next().await {
+                            match ev {
+                                Ok(ok) => log::info!("证书: {:?}", ok),
+                                Err(err) => log::error!("证书申请/续期失败: {:?}", err),
+                            }
+                        }
+                    });
+                    log::info!("账号 API 监听 https://{}:{}（Let's Encrypt 自动证书）", domain, cfg.https_addr.port());
+                    axum_server::bind(cfg.https_addr).acceptor(acceptor).serve(svc_https).await?;
+                    Ok(())
+                }
+            }
+        };
+        tokio::try_join!(http, https)?;
         Ok(())
     })
 }
