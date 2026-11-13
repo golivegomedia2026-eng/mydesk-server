@@ -8,6 +8,7 @@ mod account;
 mod audit;
 mod device;
 mod group;
+mod help;
 
 use crate::{repo, store::Db, vault::Vault};
 use axum::{
@@ -155,6 +156,9 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/audit/conn", post(audit::conn))
         .route("/api/audit/file", post(audit::file))
         .route("/api/audit/alarm", post(audit::alarm))
+        // MyDesk 扩展：求助工单
+        .route("/api/mydesk/help", post(help::create).get(help::list))
+        .route("/api/mydesk/help/{id}/done", post(help::done))
         .route("/healthz", get(|| async { "ok" }))
         .with_state(app)
 }

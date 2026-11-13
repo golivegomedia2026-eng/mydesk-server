@@ -502,3 +502,77 @@ pub async fn admin_audit(db: &Db, user_id: Option<i64>, action: &str, target: &s
         .await?;
     Ok(())
 }
+
+// ───────────────────────────── 求助工单 ─────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct HelpRequest {
+    pub id: i64,
+    pub device_id: String,
+    pub hostname: String,
+    pub message: String,
+    pub created_at: i64,
+}
+
+/// 员工求助：同一设备已有未处理工单时只更新描述与时间，避免重复刷单。
+pub async fn upsert_help(db: &Db, device_id: &str, message: &str) -> Result<(), sqlx::Error> {
+    let t = now();
+    let r = sqlx::query("UPDATE help_requests SET message = ?, updated_at = ? WHERE device_id = ? AND status = 'open'")
+        .bind(message)
+        .bind(t)
+        .bind(device_id)
+        .execute(db)
+        .await?;
+    if r.rows_affected() == 0 {
+        sqlx::query("INSERT INTO help_requests (device_id, message, created_at, updated_at) VALUES (?, ?, ?, ?)")
+            .bind(device_id)
+            .bind(message)
+            .bind(t)
+            .bind(t)
+            .execute(db)
+            .await?;
+    }
+    Ok(())
+}
+
+/// 当前用户可见的未处理工单（管理员看全部，运维只看授权分组内设备）。
+pub async fn open_help(db: &Db, user_id: i64, is_admin: bool) -> Result<Vec<HelpRequest>, sqlx::Error> {
+    let base = "SELECT h.id, h.device_id, COALESCE(NULLIF(d.alias, ''), d.hostname, '') AS hostname, h.message, h.created_at \
+                FROM help_requests h LEFT JOIN devices d ON d.id = h.device_id";
+    let rows = if is_admin {
+        sqlx::query(&format!("{base} WHERE h.status = 'open' ORDER BY h.updated_at DESC")).fetch_all(db).await?
+    } else {
+        sqlx::query(&format!(
+            "{base} JOIN user_group_access a ON a.group_id = d.group_id WHERE h.status = 'open' AND a.user_id = ? \
+             ORDER BY h.updated_at DESC"
+        ))
+        .bind(user_id)
+        .fetch_all(db)
+        .await?
+    };
+    rows.iter()
+        .map(|r| {
+            Ok(HelpRequest {
+                id: r.try_get("id")?,
+                device_id: r.try_get("device_id")?,
+                hostname: r.try_get("hostname")?,
+                message: r.try_get("message")?,
+                created_at: r.try_get("created_at")?,
+            })
+        })
+        .collect()
+}
+
+/// 标记工单已处理；只能处理自己可见的工单。返回是否成功。
+pub async fn close_help(db: &Db, id: i64, user_id: i64, is_admin: bool) -> Result<bool, sqlx::Error> {
+    if !open_help(db, user_id, is_admin).await?.iter().any(|h| h.id == id) {
+        return Ok(false);
+    }
+    let r = sqlx::query("UPDATE help_requests SET status = 'done', handled_by = ?, updated_at = ? WHERE id = ? AND status = 'open'")
+        .bind(user_id)
+        .bind(now())
+        .bind(id)
+        .execute(db)
+        .await?;
+    Ok(r.rows_affected() > 0)
+}
