@@ -93,3 +93,39 @@ jobs:
           name: mydesk-server-windows-amd64
           path: target/release/mydesk-server.exe
           if-no-files-found: error
+
+  # 真实界面截图：用本次构建的 amd64 程序启动服务、灌入演示数据，无头 Chrome 截取后台各页面
+  screenshots:
+    needs: [linux]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: mydesk-server-linux-amd64
+          path: bin
+      - name: Install CJK fonts
+        run: sudo apt-get update -y && sudo apt-get install -y fonts-noto-cjk
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Start server and seed demo data
+        run: |
+          chmod +x bin/mydesk-server
+          mkdir -p demo
+          (cd demo && nohup ../bin/mydesk-server --data-dir data > server.log 2>&1 &)
+          for _ in $(seq 1 30); do curl -fs http://127.0.0.1:21114/healthz && break; sleep 1; done
+          bash scripts/screenshots/seed.sh "$PWD/demo"
+      - name: Capture
+        run: |
+          # 保持演示设备在线
+          ( for _ in $(seq 1 40); do for id in 123456789 223456781 423456783 523456784 623456785 723456786 923456788; do
+              curl -s -o /dev/null -d "{\"id\":\"$id\",\"uuid\":\"$(echo -n u$id | base64)\"}" http://127.0.0.1:21114/api/heartbeat; done; sleep 8; done ) &
+          # ESM 不认 NODE_PATH，装到脚本旁边
+          npm install --no-save --no-package-lock --prefix scripts/screenshots playwright-core@1.56
+          CHROME=$(which google-chrome) node scripts/screenshots/shot.mjs "$PWD/demo" "$PWD/docs/screenshots"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: admin-screenshots
+          path: docs/screenshots
+          if-no-files-found: error
