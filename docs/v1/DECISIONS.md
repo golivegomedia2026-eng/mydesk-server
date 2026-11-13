@@ -7,3 +7,6 @@
 5. **编译在 GitHub Actions**（私有仓库 golivegomedia2026-eng/mydesk-server），本机无 C 工具链。
 6. **默认强制校验客户端公钥（key "_"），不调用上游的官方更新检查。**
 7. **编译环境约束**：Rust 固定 1.99.1；Linux 用 cross 编 musl 静态版并静态编译 OpenSSL；上游 sqlx 编译期检查用 `.cargo/config.toml` 的 DATABASE_URL 指向上游示例库；Windows 静态 CRT。
+8. **托管凭证走共享地址簿的 `password` 字段**（契约 §2.4/§4）：被控端在 sysinfo 中附带 `mydesk-secret`（永久密码），服务端以主密钥加密入库，仅向有分组权限的运维下发，每次下发记审计。运维端客户端零改动；被控端只需增加上报。放弃：下发 `hash`（盐不出设备，服务端无法计算）。
+9. **设备身份 TOFU**：首次 sysinfo 绑定 id↔uuid，之后 uuid 不符的上报（含凭证）一律拒绝并审计，防冒用 ID 覆盖凭证。
+10. **账号 API 与 hbbs 同进程、独立线程独立运行时**；sqlx 用上游同版本 0.6（libsqlite3-sys 只能单版本）。生产必须走 HTTPS（共享簿含明文密码），TLS 在阶段 1 后半实现。

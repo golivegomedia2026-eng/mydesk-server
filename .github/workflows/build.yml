@@ -13,6 +13,17 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@1.99.1
+      - uses: Swatinem/rust-cache@v2
+      - name: Unit tests
+        run: cargo test --locked
+
   linux:
     name: linux-${{ matrix.name }}
     runs-on: ubuntu-22.04

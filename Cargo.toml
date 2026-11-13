@@ -25,6 +25,13 @@ tokio-tungstenite = { git = "https://github.com/rustdesk-org/tokio-tungstenite",
 tungstenite = "0.29"
 flexi_logger = { version = "0.22", features = ["async", "use_chrono_for_offset", "dont_minimize_extra_stacks"] }
 
+# 账号 API。sqlx 与上游同版本：libsqlite3-sys 在依赖图中只能有一个版本
+axum = "0.8"
+sqlx = { version = "0.6", features = ["runtime-tokio-rustls", "sqlite"] }
+argon2 = "0.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
 # 静态编译 OpenSSL：交叉编译容器与目标服务器都无需安装 libssl。
 # 上游 hbbs 的 build.rs 以 hbb_common 为构建依赖，宿主侧同样需要，故两处都开 vendored。
 [target.'cfg(target_os = "linux")'.dependencies]
