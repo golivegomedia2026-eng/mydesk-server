@@ -6,3 +6,4 @@
 4. **产品名 MyDesk**，平台 Windows/macOS/Android/iOS；iOS 仅运维端。
 5. **编译在 GitHub Actions**（私有仓库 golivegomedia2026-eng/mydesk-server），本机无 C 工具链。
 6. **默认强制校验客户端公钥（key "_"），不调用上游的官方更新检查。**
+7. **编译环境约束**：Rust 固定 1.99.1；Linux 用 cross 编 musl 静态版并静态编译 OpenSSL；上游 sqlx 编译期检查用 `.cargo/config.toml` 的 DATABASE_URL 指向上游示例库；Windows 静态 CRT。
