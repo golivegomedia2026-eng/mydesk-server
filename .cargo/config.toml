@@ -1,0 +1,7 @@
+# 上游 sqlx::query! 编译期需读取示例库；上游 .env 写的是相对路径，从本工作区编译时会指错，这里给绝对路径（sqlx 接受不带 scheme 的路径）。
+[env]
+DATABASE_URL = { value = "third_party/rustdesk-server/db_v2.sqlite3", relative = true }
+
+# 与上游一致：Windows 静态链接 CRT，单个 exe 无需 VC 运行库
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-Ctarget-feature=+crt-static"]
