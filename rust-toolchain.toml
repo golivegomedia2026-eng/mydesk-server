@@ -1,0 +1,4 @@
+# 固定工具链，保证各平台可复现。1.100.0 在 Windows 上加载 sqlx-macros 过程宏 DLL 失败（2026-11-13 CI）。
+[toolchain]
+channel = "1.99.1"
+profile = "minimal"
