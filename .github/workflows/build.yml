@@ -1,0 +1,63 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    name: linux-${{ matrix.name }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: amd64, target: x86_64-unknown-linux-musl }
+          - { name: arm64, target: aarch64-unknown-linux-musl }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+      - name: Build
+        run: cross build --release --locked --target ${{ matrix.target }}
+      - name: Smoke test
+        if: matrix.name == 'amd64'
+        run: scripts/smoke.sh target/${{ matrix.target }}/release/mydesk-server
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mydesk-server-linux-${{ matrix.name }}
+          path: target/${{ matrix.target }}/release/mydesk-server
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release --locked
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mydesk-server-windows-amd64
+          path: target/release/mydesk-server.exe
+          if-no-files-found: error
