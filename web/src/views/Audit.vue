@@ -77,7 +77,7 @@ onMounted(load)
             <td>{{ r.actor || '—' }}</td>
             <td>{{ target(r) }}</td>
             <td :class="danger(r) ? 'danger' : ''">{{ label(r) }}</td>
-            <td class="small muted">{{ r.detail }}</td>
+            <td class="small muted long">{{ r.detail }}</td>
           </tr>
         </tbody>
       </table>

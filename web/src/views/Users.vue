@@ -70,7 +70,7 @@ onMounted(load)
             <td><strong>{{ u.username }}</strong></td>
             <td>{{ u.display_name }}</td>
             <td :class="u.role === 'admin' ? 'ok' : ''">{{ u.role === 'admin' ? '管理员' : '运维' }}</td>
-            <td class="small">{{ u.role === 'admin' ? '全部（含未分组）' : (groupNames(u.group_ids) || '无') }}</td>
+            <td class="small long">{{ u.role === 'admin' ? '全部（含未分组）' : (groupNames(u.group_ids) || '无') }}</td>
             <td class="small" :class="u.tfa ? 'ok' : 'warn'">{{ u.tfa ? '已开启' : '未开启' }}</td>
             <td class="small" :class="u.status === 1 ? 'ok' : 'muted'">{{ u.status === 1 ? '启用' : '停用' }}</td>
             <td class="small muted">{{ ago(u.last_login_at) }}</td>

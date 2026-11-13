@@ -14,3 +14,4 @@
 | 2026-11-13 15:19 | 1 | API 内置 HTTPS：--domain 自动 Let's Encrypt（ring）或 --tls-cert/--tls-key；开启后明文端口仅本机；冒烟加 TLS 检查 | 看 CI；之后：install 命令（systemd/Windows 服务）、Web 后台 |
 | 2026-11-13 18:21 | 2 | 管理后台：接口（TOTP 登录/绑定、设备/分组/用户/审计/设置、轮换/断开/查看密码）+ Vue 前端内嵌，默认路径 /mydeskadmin，可选 IP 白名单；冒烟加 30 项后台端到端检查 | 看 CI；客户端处理 mydesk-rotate；后台截图 |
 | 2026-11-13 18:29 | 2 | 截图脚本（演示数据+无头 Chrome）入库，CI 新增 screenshots 作业产出真实界面截图 | 取回截图放 docs/screenshots 并在 README 引用；部署文档 |
+| 2026-11-13 18:34 | 2 | 后台真实截图入库（CI 生成）+ README 部署说明 + systemd 单元；修表格挤压换行与侧栏重复显示 | 下一轮 CI 截图更新后替换 docs/screenshots；等待用户提供服务器做真机联调 |

@@ -56,7 +56,7 @@ onMounted(loadMe)
       <button v-for="v in views" :key="v.key" :class="{ on: current === v.key }" :aria-current="current === v.key ? 'page' : undefined" @click="go(v.key)">{{ v.label }}</button>
       <div class="grow"></div>
       <div class="foot small muted">
-        <div class="me">{{ session.user.display_name || session.user.username }} · 管理员</div>
+        <div class="me">{{ session.user.username }}<span v-if="session.user.display_name">（{{ session.user.display_name }}）</span> · 管理员</div>
         <div v-if="!session.user.tfa" class="warn">未开启两步验证</div>
         <div>mydesk-server {{ session.user.version }}</div>
         <button class="link" @click="logout">退出登录</button>

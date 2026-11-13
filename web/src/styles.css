@@ -81,7 +81,9 @@ a { color: var(--accent); }
 .table-wrap { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; min-width: 760px; }
 th { text-align: left; font-weight: 400; font-size: 12px; color: var(--text-3); padding: 10px 14px; border-bottom: 1px solid var(--line); }
-td { padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: middle; overflow-wrap: anywhere; }
+td { padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: middle; white-space: nowrap; }
+/* 长文本列允许换行；其余单元格保持单行，放不下时表格在容器内横向滚动 */
+td.long { white-space: normal; overflow-wrap: anywhere; min-width: 180px; }
 tr:last-child td { border-bottom: 0; }
 tr.sel td { background: var(--accent-soft); }
 
