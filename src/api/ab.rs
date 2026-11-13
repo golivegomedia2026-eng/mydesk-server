@@ -154,7 +154,7 @@ pub async fn peers(
             shared_peer(d, pw)
         })
         .collect::<Vec<_>>();
-    if released > 0 && q.current <= 1 {
+    if released > 0 && q.current <= 1 && crate::repo_admin::setting(&app.db, "log_credential_release").await? != "0" {
         repo::admin_audit(&app.db, Some(me.user.id), "credential.release", &q.ab, &format!("{released} 台设备"), &addr.ip().to_string())
             .await?;
     }

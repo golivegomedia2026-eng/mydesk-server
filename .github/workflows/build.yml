@@ -21,6 +21,13 @@ jobs:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@1.99.1
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build admin web
+        run: npm ci --prefix web && npm run build --prefix web
       - name: Unit tests
         run: cargo test --locked
 
@@ -43,6 +50,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build admin web
+        run: npm ci --prefix web && npm run build --prefix web
       - uses: taiki-e/install-action@v2
         with:
           tool: cross
@@ -65,6 +79,13 @@ jobs:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@1.99.1
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build admin web
+        run: npm ci --prefix web && npm run build --prefix web
       - name: Build
         run: cargo build --release --locked
       - uses: actions/upload-artifact@v4

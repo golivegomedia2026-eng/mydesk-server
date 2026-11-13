@@ -4,7 +4,7 @@
 //! 数据读写集中在 `crate::repo`。
 
 mod ab;
-mod account;
+pub(crate) mod account;
 mod audit;
 mod device;
 mod group;
@@ -118,13 +118,14 @@ impl FromRequestParts<Arc<App>> for CurrentUser {
             .map(str::trim)
             .filter(|t| !t.is_empty())
             .ok_or_else(ApiError::unauthorized)?;
-        let user = repo::user_by_token(&app.db, token).await?.ok_or_else(ApiError::unauthorized)?;
+        let user = repo::user_by_token(&app.db, token, repo::TokenKind::Client).await?.ok_or_else(ApiError::unauthorized)?;
         Ok(CurrentUser { user, token: token.to_owned() })
     }
 }
 
-/// 组装全部路由。
-pub fn router(app: Arc<App>) -> Router {
+/// 组装全部路由（客户端 API + 管理后台）。
+pub fn router(app: Arc<App>, admin: crate::admin::AdminConfig) -> Router {
+    let admin = crate::admin::router(app.clone(), admin);
     Router::new()
         // 账户
         .route("/api/login-options", get(account::login_options))
@@ -161,6 +162,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/mydesk/help/{id}/done", post(help::done))
         .route("/healthz", get(|| async { "ok" }))
         .with_state(app)
+        .merge(admin)
 }
 
 /// API 的 TLS 模式。
@@ -181,6 +183,7 @@ pub struct ServeConfig {
     pub https_addr: SocketAddr,
     pub tls: Tls,
     pub db_path: String,
+    pub admin: crate::admin::AdminConfig,
 }
 
 /// 在当前线程新建 tokio 运行时并运行 API 服务（数据库连接池须与使用它的运行时同属一个）。
@@ -191,7 +194,7 @@ pub fn serve_blocking(cfg: ServeConfig) -> ResultType<()> {
         let db = crate::store::open(&cfg.db_path).await?;
         crate::bootstrap::ensure_admin(&db).await?;
         let app = Arc::new(App { db, vault: Vault::load_or_create()?, login_failures: Mutex::default() });
-        let make = || router(app.clone()).into_make_service_with_connect_info::<SocketAddr>();
+        let make = || router(app.clone(), cfg.admin.clone()).into_make_service_with_connect_info::<SocketAddr>();
         let (svc_http, svc_https) = (make(), make());
 
         let mut http_addr = cfg.http_addr;

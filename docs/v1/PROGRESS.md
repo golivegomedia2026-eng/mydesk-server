@@ -12,3 +12,4 @@
 | 2026-11-13 14:18 | 1 | 账号 API 首版 CI 全绿（28 项端到端+单元测试）；新增求助工单接口 /api/mydesk/help | 客户端 fork：内置配置、托管密码上报、新界面、精简 CI |
 | 2026-11-13 15:17 | 4 | 客户端 Windows x64 构建通过（mydesk-client v1，run 43442979574，便携版 25MB） | 部署服务端并配置仓库变量后真机验证；HTTPS；品牌替换；macOS/Android/iOS 构建与手机端界面 |
 | 2026-11-13 15:19 | 1 | API 内置 HTTPS：--domain 自动 Let's Encrypt（ring）或 --tls-cert/--tls-key；开启后明文端口仅本机；冒烟加 TLS 检查 | 看 CI；之后：install 命令（systemd/Windows 服务）、Web 后台 |
+| 2026-11-13 18:21 | 2 | 管理后台：接口（TOTP 登录/绑定、设备/分组/用户/审计/设置、轮换/断开/查看密码）+ Vue 前端内嵌，默认路径 /mydeskadmin，可选 IP 白名单；冒烟加 30 项后台端到端检查 | 看 CI；客户端处理 mydesk-rotate；后台截图 |

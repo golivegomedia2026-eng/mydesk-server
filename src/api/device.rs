@@ -9,6 +9,8 @@ use std::{net::SocketAddr, sync::Arc};
 
 /// MyDesk 客户端在 sysinfo 中附带的托管凭证字段（被控端永久密码）。官方客户端不会发送。
 pub const SECRET_FIELD: &str = "mydesk-secret";
+/// 心跳响应中要求 MyDesk 客户端轮换托管密码的字段。
+pub const ROTATE_FIELD: &str = "mydesk-rotate";
 /// 部署时预置的分组名（官方字段）。
 const PRESET_GROUP: &str = "preset-device-group-name";
 
@@ -70,7 +72,18 @@ pub async fn heartbeat(State(app): State<Arc<App>>, body: Bytes) -> ApiResult<Js
         return Err(ApiError::bad_request("缺少 id"));
     }
     if repo::touch_online(&app.db, id, uuid).await? {
-        Ok(Json(json!({})))
+        let mut resp = json!({});
+        let (rotate, disconnect) = repo::take_device_commands(&app.db, id).await?;
+        if rotate {
+            // MyDesk 客户端据此重新生成托管密码，并随强制重传的 sysinfo 上报
+            resp[ROTATE_FIELD] = json!(1);
+            resp["sysinfo"] = json!(1);
+        }
+        if disconnect {
+            // 断开当前所有连接：回送设备自己上报的连接号
+            resp["disconnect"] = v.get("conns").cloned().unwrap_or_else(|| json!([]));
+        }
+        Ok(Json(resp))
     } else {
         // 未登记的设备：要求客户端重新上传 sysinfo 完成登记
         Ok(Json(json!({ "sysinfo": 1 })))

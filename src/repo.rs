@@ -37,23 +37,46 @@ pub async fn user_by_name(db: &Db, username: &str) -> Result<Option<User>, sqlx:
     sqlx::query(&sql).bind(username).fetch_optional(db).await?.as_ref().map(user_from).transpose()
 }
 
-/// 由明文令牌查用户：令牌未过期且用户启用；距上次使用超过 1 小时则滑动续期。
-pub async fn user_by_token(db: &Db, token: &str) -> Result<Option<User>, sqlx::Error> {
+/// 令牌类别：客户端登录（RustDesk 客户端）与后台会话分开，互不通用。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenKind {
+    Client,
+    Admin,
+}
+
+impl TokenKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            TokenKind::Client => "client",
+            TokenKind::Admin => "admin",
+        }
+    }
+    /// 有效期：客户端 30 天（滑动），后台 12 小时（滑动）。
+    pub fn ttl(self) -> i64 {
+        match self {
+            TokenKind::Client => auth::TOKEN_TTL_SECS,
+            TokenKind::Admin => 12 * 3600,
+        }
+    }
+}
+
+/// 由明文令牌查用户：令牌类别匹配、未过期且用户启用；距上次使用超过 5 分钟则滑动续期。
+pub async fn user_by_token(db: &Db, token: &str, kind: TokenKind) -> Result<Option<User>, sqlx::Error> {
     let digest = auth::token_digest(token);
     let t = now();
     let sql = format!(
         "SELECT u.{}, t.last_used_at FROM tokens t JOIN users u ON u.id = t.user_id \
-         WHERE t.token_hash = ? AND t.expires_at > ? AND u.status = 1",
+         WHERE t.token_hash = ? AND t.expires_at > ? AND u.status = 1 AND t.kind = ?",
         USER_COLS.replace(", ", ", u.")
     );
-    let Some(row) = sqlx::query(&sql).bind(&digest).bind(t).fetch_optional(db).await? else {
+    let Some(row) = sqlx::query(&sql).bind(&digest).bind(t).bind(kind.as_str()).fetch_optional(db).await? else {
         return Ok(None);
     };
     let last: i64 = row.try_get("last_used_at")?;
-    if t - last > 3600 {
+    if t - last > 300 {
         sqlx::query("UPDATE tokens SET last_used_at = ?, expires_at = ? WHERE token_hash = ?")
             .bind(t)
-            .bind(t + auth::TOKEN_TTL_SECS)
+            .bind(t + kind.ttl())
             .bind(&digest)
             .execute(db)
             .await?;
@@ -62,12 +85,12 @@ pub async fn user_by_token(db: &Db, token: &str) -> Result<Option<User>, sqlx::E
 }
 
 /// 签发令牌，返回明文。
-pub async fn create_token(db: &Db, user_id: i64, client_id: &str, client_uuid: &str) -> Result<String, sqlx::Error> {
+pub async fn create_token(db: &Db, user_id: i64, client_id: &str, client_uuid: &str, kind: TokenKind) -> Result<String, sqlx::Error> {
     let token = auth::new_token();
     let t = now();
     sqlx::query(
-        "INSERT INTO tokens (token_hash, user_id, client_id, client_uuid, created_at, last_used_at, expires_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO tokens (token_hash, user_id, client_id, client_uuid, created_at, last_used_at, expires_at, kind) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(auth::token_digest(&token))
     .bind(user_id)
@@ -75,10 +98,18 @@ pub async fn create_token(db: &Db, user_id: i64, client_id: &str, client_uuid: &
     .bind(client_uuid)
     .bind(t)
     .bind(t)
-    .bind(t + auth::TOKEN_TTL_SECS)
+    .bind(t + kind.ttl())
+    .bind(kind.as_str())
     .execute(db)
     .await?;
+    sqlx::query("UPDATE users SET last_login_at = ? WHERE id = ?").bind(t).bind(user_id).execute(db).await?;
     Ok(token)
+}
+
+/// 吊销某用户的全部令牌（停用账号、重置密码时）。
+pub async fn revoke_user_tokens(db: &Db, user_id: i64) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM tokens WHERE user_id = ?").bind(user_id).execute(db).await?;
+    Ok(())
 }
 
 pub async fn delete_token(db: &Db, token: &str) -> Result<(), sqlx::Error> {
@@ -290,7 +321,7 @@ pub async fn upsert_sysinfo(db: &Db, s: &SysInfo<'_>) -> Result<Report, sqlx::Er
 
 /// 保存托管凭证密文（调用方已确认 uuid 匹配）。
 pub async fn set_device_secret(db: &Db, id: &str, cipher: &str) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE devices SET secret_cipher = ?, secret_at = ? WHERE id = ?")
+    sqlx::query("UPDATE devices SET secret_cipher = ?, secret_at = ?, rotate_pending = 0 WHERE id = ?")
         .bind(cipher)
         .bind(now())
         .bind(id)
@@ -575,4 +606,20 @@ pub async fn close_help(db: &Db, id: i64, user_id: i64, is_admin: bool) -> Resul
         .execute(db)
         .await?;
     Ok(r.rows_affected() > 0)
+}
+
+// ───────────────────────────── 下发给设备的指令 ─────────────────────────────
+
+/// 读取并消费设备的待执行指令：返回 (是否要求轮换密码, 是否要求断开连接)。
+/// 断开指令读取即清除（随本次心跳送达）；轮换指令在收到新密码后由 `set_device_secret` 清除。
+pub async fn take_device_commands(db: &Db, id: &str) -> Result<(bool, bool), sqlx::Error> {
+    let Some(r) = sqlx::query("SELECT rotate_pending, disconnect_pending FROM devices WHERE id = ?").bind(id).fetch_optional(db).await? else {
+        return Ok((false, false));
+    };
+    let rotate: i64 = r.try_get(0)?;
+    let disconnect: i64 = r.try_get(1)?;
+    if disconnect != 0 {
+        sqlx::query("UPDATE devices SET disconnect_pending = 0 WHERE id = ?").bind(id).execute(db).await?;
+    }
+    Ok((rotate != 0, disconnect != 0))
 }

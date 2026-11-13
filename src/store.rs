@@ -8,7 +8,7 @@ use sqlx::{
 use std::{str::FromStr, time::Duration};
 
 /// 迁移脚本，下标 + 1 即目标 user_version；只追加，不修改已发布的脚本。
-const MIGRATIONS: &[&str] = &[include_str!("../migrations/0001_init.sql")];
+const MIGRATIONS: &[&str] = &[include_str!("../migrations/0001_init.sql"), include_str!("../migrations/0002_admin.sql")];
 
 pub type Db = SqlitePool;
 

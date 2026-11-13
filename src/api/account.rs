@@ -74,7 +74,7 @@ pub async fn login(State(app): State<Arc<App>>, body: Bytes) -> ApiResult<Json<V
         return Err(ApiError::forbidden("账号已停用"));
     }
     app.login_failures.lock().unwrap().remove(&key);
-    let token = repo::create_token(&app.db, user.id, &req.id, &req.uuid).await?;
+    let token = repo::create_token(&app.db, user.id, &req.id, &req.uuid, repo::TokenKind::Client).await?;
     repo::admin_audit(&app.db, Some(user.id), "login", &req.id, "", "").await?;
     Ok(Json(json!({ "type": "access_token", "access_token": token, "user": user_payload(&user) })))
 }
@@ -89,17 +89,17 @@ pub async fn logout(State(app): State<Arc<App>>, me: CurrentUser) -> ApiResult<&
 }
 
 /// 一个合法但永远不会匹配的 argon2 哈希，用于恒定耗时。
-const DUMMY_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHRzb21lc2FsdA$J5OaD0P8C2xjxXGJ+uYzR3lJ7r1Qm6a3cQ4bhuD9hF0";
+pub(crate) const DUMMY_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHRzb21lc2FsdA$J5OaD0P8C2xjxXGJ+uYzR3lJ7r1Qm6a3cQ4bhuD9hF0";
 
 /// 仍在锁定期则返回剩余秒数。
-fn locked_for(app: &App, key: &str) -> Option<i64> {
+pub(crate) fn locked_for(app: &App, key: &str) -> Option<i64> {
     let map = app.login_failures.lock().unwrap();
     let (n, first) = map.get(key)?;
     let left = first + LOCK_SECS - now();
     (*n >= MAX_FAILURES && left > 0).then_some(left)
 }
 
-fn record_failure(app: &App, key: &str) {
+pub(crate) fn record_failure(app: &App, key: &str) {
     let mut map = app.login_failures.lock().unwrap();
     let t = now();
     let e = map.entry(key.to_owned()).or_insert((0, t));

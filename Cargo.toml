@@ -33,6 +33,14 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # HTTPS：自动申请 Let's Encrypt 证书（TLS-ALPN-01，仅需 443 端口），或加载自备证书。用 ring，免 cmake/NASM。
 rustls-acme = { version = "0.15", default-features = false, features = ["axum", "ring", "tls12", "webpki-roots"] }
+# 管理后台：TOTP、二维码、前端资源内嵌、来源白名单
+hmac = "0.12"
+sha1 = "0.10"
+data-encoding = "2"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+rust-embed = "8"
+mime_guess = "2"
+ipnetwork = "0.20"
 axum-server = { version = "0.8", features = ["tls-rustls-no-provider"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "tls12", "std", "logging"] }
 

@@ -15,11 +15,14 @@ use hbbs::common;
 #[allow(dead_code, clippy::all)]
 mod relay_server;
 
+mod admin;
 mod api;
 mod auth;
 mod bootstrap;
 mod repo;
+mod repo_admin;
 mod store;
+mod totp;
 mod vault;
 
 use flexi_logger::{opt_format, Logger, WriteMode};
@@ -43,6 +46,9 @@ MyDesk 单文件服务端
   --tls-cert <FILE> --tls-key <FILE>
                       使用自备证书开启 HTTPS（与 --domain 二选一）
   --https-port <PORT> HTTPS 端口，默认 443
+  --admin-path <PATH> 管理后台路径，默认 mydeskadmin（访问 https://域名/<PATH>/）
+  --admin-allow <CIDR,...>
+                      仅允许这些网段访问管理后台，例如 203.0.113.0/24,10.0.0.0/8
   --reset-password <用户名>
                       重置该用户密码并打印新密码后退出
   --bind <IP>         监听地址，默认所有网卡
@@ -52,7 +58,17 @@ MyDesk 单文件服务端
 
 每个选项也可用环境变量设置：MYDESK_DATA_DIR、MYDESK_HOST、MYDESK_PORT、
 MYDESK_RELAY_PORT、MYDESK_API_PORT、MYDESK_DOMAIN、MYDESK_ACME_EMAIL、
-MYDESK_TLS_CERT、MYDESK_TLS_KEY、MYDESK_HTTPS_PORT、MYDESK_BIND、MYDESK_OPEN_KEY=1。命令行优先。";
+MYDESK_TLS_CERT、MYDESK_TLS_KEY、MYDESK_HTTPS_PORT、MYDESK_ADMIN_PATH、
+MYDESK_ADMIN_ALLOW、MYDESK_BIND、MYDESK_OPEN_KEY=1。命令行优先。";
+
+/// 解析后台来源白名单（逗号分隔的 IP 或网段）。
+fn parse_allow(s: &str) -> ResultType<Vec<ipnetwork::IpNetwork>> {
+    s.split(',')
+        .map(str::trim)
+        .filter(|x| !x.is_empty())
+        .map(|x| x.parse().map_err(|e| hbb_common::anyhow::anyhow!("--admin-allow 中的 {x} 无效: {e}")))
+        .collect()
+}
 
 /// 账号数据库文件名（位于数据目录）。
 const DB_FILE: &str = "mydesk.db";
@@ -70,6 +86,8 @@ struct Options {
     tls_cert: String,
     tls_key: String,
     https_port: u16,
+    admin_path: String,
+    admin_allow: String,
     bind: String,
     open_key: bool,
     reset_password: Option<String>,
@@ -90,6 +108,8 @@ impl Options {
             tls_cert: env("MYDESK_TLS_CERT").unwrap_or_default(),
             tls_key: env("MYDESK_TLS_KEY").unwrap_or_default(),
             https_port: env("MYDESK_HTTPS_PORT").map(|v| v.parse()).transpose()?.unwrap_or(443),
+            admin_path: env("MYDESK_ADMIN_PATH").unwrap_or_else(|| "mydeskadmin".into()),
+            admin_allow: env("MYDESK_ADMIN_ALLOW").unwrap_or_default(),
             bind: env("MYDESK_BIND").unwrap_or_default(),
             open_key: env("MYDESK_OPEN_KEY").as_deref() == Some("1"),
             reset_password: None,
@@ -117,6 +137,8 @@ impl Options {
                 "--tls-cert" => opts.tls_cert = value(&name)?,
                 "--tls-key" => opts.tls_key = value(&name)?,
                 "--https-port" => opts.https_port = value(&name)?.parse()?,
+                "--admin-path" => opts.admin_path = value(&name)?,
+                "--admin-allow" => opts.admin_allow = value(&name)?,
                 "--reset-password" => opts.reset_password = Some(value(&name)?),
                 "--bind" => opts.bind = value(&name)?,
                 "--open-key" => opts.open_key = true,
@@ -133,6 +155,13 @@ impl Options {
         }
         if opts.port < 3 || opts.relay_port < 3 {
             bail!("端口不合法");
+        }
+        opts.admin_path = opts.admin_path.trim_matches('/').to_owned();
+        if opts.admin_path.is_empty()
+            || opts.admin_path == "api"
+            || !opts.admin_path.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            bail!("--admin-path 只能包含字母、数字、- 和 _，且不能为 api");
         }
         if opts.tls_cert.is_empty() != opts.tls_key.is_empty() {
             bail!("--tls-cert 与 --tls-key 需同时提供");
@@ -211,6 +240,12 @@ fn main() -> ResultType<()> {
         https_addr: std::net::SocketAddr::new(any_ip, opts.https_port),
         tls,
         db_path: DB_FILE.to_owned(),
+        admin: admin::AdminConfig {
+            path: opts.admin_path.clone(),
+            allow: parse_allow(&opts.admin_allow)?,
+            domain: opts.domain.clone(),
+            secure_cookie: !opts.domain.is_empty() || !opts.tls_cert.is_empty(),
+        },
     };
     let t = tx.clone();
     std::thread::Builder::new().name("api".into()).spawn(move || {
