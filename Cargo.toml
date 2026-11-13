@@ -25,6 +25,14 @@ tokio-tungstenite = { git = "https://github.com/rustdesk-org/tokio-tungstenite",
 tungstenite = "0.29"
 flexi_logger = { version = "0.22", features = ["async", "use_chrono_for_offset", "dont_minimize_extra_stacks"] }
 
+# 静态编译 OpenSSL：交叉编译容器与目标服务器都无需安装 libssl。
+# 上游 hbbs 的 build.rs 以 hbb_common 为构建依赖，宿主侧同样需要，故两处都开 vendored。
+[target.'cfg(target_os = "linux")'.dependencies]
+openssl = { version = "0.10", features = ["vendored"] }
+
+[target.'cfg(target_os = "linux")'.build-dependencies]
+openssl = { version = "0.10", features = ["vendored"] }
+
 [workspace]
 exclude = ["third_party"]
 
