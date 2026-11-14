@@ -1,2 +1,2 @@
-/target
-/data
+# 仓库级忽略；server/ 与 client/ 各自另有 .gitignore
+.DS_Store

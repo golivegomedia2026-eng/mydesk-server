@@ -1,0 +1,26 @@
+# MyDesk 服务端 systemd 单元。安装：见 README “部署”。
+[Unit]
+Description=MyDesk server (ID/relay/API/admin)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=mydesk
+Group=mydesk
+WorkingDirectory=/var/lib/mydesk
+ExecStart=/usr/local/bin/mydesk-server --data-dir /var/lib/mydesk/data --domain rd.example.com
+Restart=always
+RestartSec=3
+# 允许非 root 用户监听 443
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+# 加固
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/mydesk
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target

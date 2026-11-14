@@ -1,0 +1,66 @@
+[package]
+name = "mydesk-server"
+version = "0.1.0"
+edition = "2021"
+description = "MyDesk 单文件服务端：内含 ID/信令（hbbs）、中继（hbbr），后续加入账号 API 与 Web 后台"
+license = "AGPL-3.0-only"
+publish = false
+
+[[bin]]
+name = "mydesk-server"
+path = "src/main.rs"
+
+[dependencies]
+# 官方服务端（以 git submodule 固定版本），直接复用其信令服务与公共模块
+hbbs = { path = "third_party/rustdesk-server" }
+hbb_common = { path = "third_party/rustdesk-server/libs/hbb_common" }
+
+# relay_server.rs 通过 #[path] 编入本 crate，下列依赖与上游版本保持一致
+async-speed-limit = { git = "https://github.com/open-trade/async-speed-limit" }
+async-trait = "0.1"
+base64 = "0.13"
+lazy_static = "1.4"
+sodiumoxide = "0.2"
+tokio-tungstenite = { git = "https://github.com/rustdesk-org/tokio-tungstenite", rev = "c241b11b03de4881faf1ecd2fe6e867c92f3013b", version = "0.29" }
+tungstenite = "0.29"
+flexi_logger = { version = "0.22", features = ["async", "use_chrono_for_offset", "dont_minimize_extra_stacks"] }
+
+# 账号 API。sqlx 与上游同版本：libsqlite3-sys 在依赖图中只能有一个版本
+axum = "0.8"
+sqlx = { version = "0.6", features = ["runtime-tokio-rustls", "sqlite"] }
+argon2 = "0.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# HTTPS：自动申请 Let's Encrypt 证书（TLS-ALPN-01，仅需 443 端口），或加载自备证书。用 ring，免 cmake/NASM。
+rustls-acme = { version = "0.15", default-features = false, features = ["axum", "ring", "tls12", "webpki-roots"] }
+# 管理后台：TOTP、二维码、前端资源内嵌、来源白名单
+hmac = "0.12"
+sha1 = "0.10"
+data-encoding = "2"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+rust-embed = "8"
+mime_guess = "2"
+ipnetwork = "0.20"
+axum-server = { version = "0.8", features = ["tls-rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "tls12", "std", "logging"] }
+
+# 静态编译 OpenSSL：交叉编译容器与目标服务器都无需安装 libssl。
+# 上游 hbbs 的 build.rs 以 hbb_common 为构建依赖，宿主侧同样需要，故两处都开 vendored。
+[target.'cfg(target_os = "linux")'.dependencies]
+openssl = { version = "0.10", features = ["vendored"] }
+
+[target.'cfg(target_os = "linux")'.build-dependencies]
+openssl = { version = "0.10", features = ["vendored"] }
+
+[workspace]
+exclude = ["third_party"]
+
+# 与上游保持一致，否则 tungstenite 版本会分叉
+[patch.crates-io]
+tungstenite = { git = "https://github.com/rustdesk-org/tungstenite-rs", rev = "efce47e5364f00a63302cf07ab1fb13ded478914" }
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

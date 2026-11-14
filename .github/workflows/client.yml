@@ -1,0 +1,174 @@
+# MyDesk 客户端构建（精简自上游 flutter-build.yml / bridge.yml，版本号与上游 1.5.3 保持一致）。
+# 上游自带的工作流位于 client/.github/，不在仓库根目录，GitHub 不会执行。只在 client/ 有改动时触发。
+#
+# 服务器信息来自仓库 Variables（Settings → Secrets and variables → Actions → Variables）：
+#   MYDESK_SERVER_HOST   ID/中继服务器地址，如 rd.example.com
+#   MYDESK_SERVER_KEY    mydesk-server 数据目录 id_ed25519.pub 的内容
+#   MYDESK_API_SERVER    账号 API 地址，如 https://rd.example.com
+#   MYDESK_ORG_NAME      （可选）界面显示的单位名称
+# 未配置时仍可构建，界面可预览，但无法连接服务器。
+name: client
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, v1]
+    paths: ["client/**", ".github/workflows/client.yml", "!client/**.md"]
+
+concurrency:
+  group: client-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_VERSION: "1.75"
+  CARGO_EXPAND_VERSION: "1.0.95"
+  FLUTTER_RUST_BRIDGE_VERSION: "1.80.1"
+  BRIDGE_FLUTTER_VERSION: "3.22.3"
+  FLUTTER_VERSION: "3.24.5"
+  LLVM_VERSION: "15.0.6"
+  VCPKG_COMMIT_ID: "9e593bb18ea69cc5095e012465dcd675a822ed0d"
+  VERSION: "1.5.3"
+
+defaults:
+  run:
+    working-directory: client
+
+jobs:
+  bridge:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout client submodule only
+        working-directory: .
+        run: git submodule update --init --recursive --depth 1 client/libs/hbb_common
+      - name: Install prerequisites
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y clang cmake curl gcc git g++ libclang-dev libgtk-3-dev llvm-dev nasm ninja-build pkg-config wget
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: client
+          prefix-key: bridge
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.BRIDGE_FLUTTER_VERSION }}
+          cache: true
+      - name: Install flutter rust bridge
+        run: |
+          cargo install cargo-expand --version ${{ env.CARGO_EXPAND_VERSION }} --locked
+          cargo install flutter_rust_bridge_codegen --version ${{ env.FLUTTER_RUST_BRIDGE_VERSION }} --features "uuid" --locked
+          sed -i -e 's/extended_text: 14.0.0/extended_text: 13.0.0/g' flutter/pubspec.yaml
+          pushd flutter && flutter pub get && popd
+      - name: Generate bridge
+        run: |
+          ~/.cargo/bin/flutter_rust_bridge_codegen --rust-input ./src/flutter_ffi.rs --dart-output ./flutter/lib/generated_bridge.dart --c-output ./flutter/macos/Runner/bridge_generated.h
+          cp ./flutter/macos/Runner/bridge_generated.h ./flutter/ios/Runner/bridge_generated.h
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bridge-artifact
+          path: |
+            client/src/bridge_generated.rs
+            client/src/bridge_generated.io.rs
+            client/flutter/lib/generated_bridge.dart
+            client/flutter/lib/generated_bridge.freezed.dart
+            client/flutter/macos/Runner/bridge_generated.h
+            client/flutter/ios/Runner/bridge_generated.h
+
+  windows:
+    needs: [bridge]
+    runs-on: windows-2022
+    env:
+      TARGET: x86_64-pc-windows-msvc
+      VCPKG_TRIPLET: x64-windows-static
+      VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+    steps:
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+      - uses: actions/checkout@v4
+      - name: Checkout client submodule only
+        working-directory: .
+        run: git submodule update --init --recursive --depth 1 client/libs/hbb_common
+      - uses: actions/download-artifact@v4
+        with:
+          name: bridge-artifact
+          path: client
+      - name: Compose MyDesk builtin config
+        shell: bash
+        env:
+          HOST: ${{ vars.MYDESK_SERVER_HOST }}
+          KEY: ${{ vars.MYDESK_SERVER_KEY }}
+          API: ${{ vars.MYDESK_API_SERVER }}
+          ORG: ${{ vars.MYDESK_ORG_NAME }}
+        run: |
+          python3 .github/mydesk/compose_config.py >> "$GITHUB_ENV"
+      - uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: ${{ env.LLVM_VERSION }}
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          architecture: x64
+      - name: Replace engine with rustdesk custom flutter engine
+        run: |
+          flutter precache --windows
+          Invoke-WebRequest -Uri https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip -OutFile windows-x64-release.zip
+          Expand-Archive -Path windows-x64-release.zip -DestinationPath windows-x64-release
+          mv -Force windows-x64-release/* "$env:FLUTTER_ROOT/bin/cache/artifacts/engine/windows-x64-release/"
+      - name: Patch flutter
+        shell: bash
+        run: |
+          cp .github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff $(dirname $(dirname $(which flutter)))
+          cd $(dirname $(dirname $(which flutter)))
+          git apply flutter_3.24.4_dropdown_menu_enableFilter.diff
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: ${{ env.TARGET }}
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: client
+          prefix-key: windows
+      - uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgDirectory: C:\vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+      - name: Install vcpkg dependencies
+        shell: bash
+        env:
+          VCPKG_DEFAULT_HOST_TRIPLET: ${{ env.VCPKG_TRIPLET }}
+        run: |
+          if ! $VCPKG_ROOT/vcpkg install --triplet $VCPKG_TRIPLET --x-install-root="$VCPKG_ROOT/installed"; then
+            find "${VCPKG_ROOT}/" -name "*.log" | while read -r f; do echo "== $f"; tail -50 "$f"; done
+            exit 1
+          fi
+      - name: Build
+        run: |
+          python3 .\build.py --portable --flutter --skip-portable-pack --hwcodec --vram
+          mv ./flutter/build/windows/x64/runner/Release ./rustdesk
+      - name: Build self-extracted executable
+        shell: bash
+        run: |
+          sed -i '/dpiAware/d' res/manifest.xml
+          pushd ./libs/portable
+          pip3 install -r requirements.txt
+          python3 ./generate.py -f ../../rustdesk/ -o . -e ../../rustdesk/rustdesk.exe
+          popd
+          mkdir -p ./out
+          mv ./target/release/rustdesk-portable-packer.exe ./out/mydesk-${{ env.VERSION }}-x86_64.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mydesk-windows-x86_64
+          path: client/out/mydesk-*.exe
+          if-no-files-found: error
