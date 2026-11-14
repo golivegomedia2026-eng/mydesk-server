@@ -1,5 +1,5 @@
 # MyDesk 客户端构建（精简自上游 flutter-build.yml / bridge.yml，版本号与上游 1.5.3 保持一致）。
-# 上游自带的工作流已在仓库设置中全部停用，避免消耗私有仓库的 Actions 额度。
+# 上游自带的工作流位于 client/.github/，不在仓库根目录，GitHub 不会执行。只在 client/ 有改动时触发。
 #
 # 服务器信息来自仓库 Variables（Settings → Secrets and variables → Actions → Variables）：
 #   MYDESK_SERVER_HOST   ID/中继服务器地址，如 rd.example.com
@@ -7,16 +7,16 @@
 #   MYDESK_API_SERVER    账号 API 地址，如 https://rd.example.com
 #   MYDESK_ORG_NAME      （可选）界面显示的单位名称
 # 未配置时仍可构建，界面可预览，但无法连接服务器。
-name: MyDesk build
+name: client
 
 on:
   workflow_dispatch:
   push:
-    branches: [v1]
-    paths-ignore: ["docs/**", "**.md"]
+    branches: [main, v1]
+    paths: ["client/**", ".github/workflows/client.yml", "!client/**.md"]
 
 concurrency:
-  group: mydesk-build-${{ github.ref }}
+  group: client-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -29,13 +29,18 @@ env:
   VCPKG_COMMIT_ID: "9e593bb18ea69cc5095e012465dcd675a822ed0d"
   VERSION: "1.5.3"
 
+defaults:
+  run:
+    working-directory: client
+
 jobs:
   bridge:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
+      - name: Checkout client submodule only
+        working-directory: .
+        run: git submodule update --init --recursive --depth 1 client/libs/hbb_common
       - name: Install prerequisites
         run: |
           sudo apt-get update -y
@@ -46,6 +51,7 @@ jobs:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
+          workspaces: client
           prefix-key: bridge
       - uses: subosito/flutter-action@v2
         with:
@@ -66,12 +72,12 @@ jobs:
         with:
           name: bridge-artifact
           path: |
-            ./src/bridge_generated.rs
-            ./src/bridge_generated.io.rs
-            ./flutter/lib/generated_bridge.dart
-            ./flutter/lib/generated_bridge.freezed.dart
-            ./flutter/macos/Runner/bridge_generated.h
-            ./flutter/ios/Runner/bridge_generated.h
+            client/src/bridge_generated.rs
+            client/src/bridge_generated.io.rs
+            client/flutter/lib/generated_bridge.dart
+            client/flutter/lib/generated_bridge.freezed.dart
+            client/flutter/macos/Runner/bridge_generated.h
+            client/flutter/ios/Runner/bridge_generated.h
 
   windows:
     needs: [bridge]
@@ -88,12 +94,13 @@ jobs:
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
+      - name: Checkout client submodule only
+        working-directory: .
+        run: git submodule update --init --recursive --depth 1 client/libs/hbb_common
       - uses: actions/download-artifact@v4
         with:
           name: bridge-artifact
-          path: ./
+          path: client
       - name: Compose MyDesk builtin config
         shell: bash
         env:
@@ -130,6 +137,7 @@ jobs:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
+          workspaces: client
           prefix-key: windows
       - uses: lukka/run-vcpkg@v11
         with:
@@ -162,5 +170,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: mydesk-windows-x86_64
-          path: ./out/mydesk-*.exe
+          path: client/out/mydesk-*.exe
           if-no-files-found: error

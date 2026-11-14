@@ -13,3 +13,4 @@
 11. **Web 管理后台**（效果图 2026-11-13 确认：https://claude.ai/artifact/BwUEoF4E7sXwNdB9kCXXDd）：内嵌单文件，默认路径 `/mydeskadmin`（`--admin-path` 可改），可选 `--admin-allow` 限制来源 IP 段；仅管理员登录，管理员强制两步验证（TOTP）；会话用 HttpOnly+Secure+SameSite=Strict Cookie。
 12. **管理员可查看托管密码**（用户确认）：须当场输入两步验证码，每次查看记审计。
 13. **托管密码轮换**（用户确认）：后台标记 → 心跳响应带 `mydesk-rotate` → 客户端删除本机托管密码并重新生成上报。
+14. **单一仓库**（用户要求，2026-11-14）：mydesk-server 改名 mydesk，服务端在 server/、客户端以 git subtree 导入 client/（保留历史），文档在 docs/；工作流按目录触发（server.yml / client.yml），各自只检出所需子模块。原 mydesk-client 仓库保留待归档。
