@@ -1,9 +1,12 @@
-name: build
+# 服务端：单元测试、Linux（musl 静态）/Windows 构建、冒烟测试、后台截图。只在 server/ 有改动时触发。
+name: server
 
 on:
   push:
     branches: [main, v1]
+    paths: ["server/**", ".github/workflows/server.yml", ".gitmodules"]
   pull_request:
+    paths: ["server/**", ".github/workflows/server.yml"]
   workflow_dispatch:
 
 permissions:
@@ -12,20 +15,27 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
 
+defaults:
+  run:
+    working-directory: server
+
 jobs:
   test:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
+      - name: Checkout server submodule only
+        working-directory: .
+        run: git submodule update --init --recursive --depth 1 server/third_party/rustdesk-server
       - uses: dtolnay/rust-toolchain@1.99.1
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: server/web/package-lock.json
       - name: Build admin web
         run: npm ci --prefix web && npm run build --prefix web
       - name: Unit tests
@@ -42,19 +52,21 @@ jobs:
           - { name: arm64, target: aarch64-unknown-linux-musl }
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
+      - name: Checkout server submodule only
+        working-directory: .
+        run: git submodule update --init --recursive --depth 1 server/third_party/rustdesk-server
       - uses: dtolnay/rust-toolchain@1.99.1
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
+          workspaces: server
           key: ${{ matrix.target }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: server/web/package-lock.json
       - name: Build admin web
         run: npm ci --prefix web && npm run build --prefix web
       - uses: taiki-e/install-action@v2
@@ -68,22 +80,25 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: mydesk-server-linux-${{ matrix.name }}
-          path: target/${{ matrix.target }}/release/mydesk-server
+          path: server/target/${{ matrix.target }}/release/mydesk-server
           if-no-files-found: error
 
   windows:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
+      - name: Checkout server submodule only
+        working-directory: .
+        run: git submodule update --init --recursive --depth 1 server/third_party/rustdesk-server
       - uses: dtolnay/rust-toolchain@1.99.1
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: server/web/package-lock.json
       - name: Build admin web
         run: npm ci --prefix web && npm run build --prefix web
       - name: Build
@@ -91,7 +106,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: mydesk-server-windows-amd64
-          path: target/release/mydesk-server.exe
+          path: server/target/release/mydesk-server.exe
           if-no-files-found: error
 
   # 真实界面截图：用本次构建的 amd64 程序启动服务、灌入演示数据，无头 Chrome 截取后台各页面
@@ -103,7 +118,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: mydesk-server-linux-amd64
-          path: bin
+          path: server/bin
       - name: Install CJK fonts
         run: sudo apt-get update -y && sudo apt-get install -y fonts-noto-cjk
       - uses: actions/setup-node@v4
@@ -123,7 +138,7 @@ jobs:
               curl -s -o /dev/null -d "{\"id\":\"$id\",\"uuid\":\"$(echo -n u$id | base64)\"}" http://127.0.0.1:21114/api/heartbeat; done; sleep 8; done ) &
           # ESM 不认 NODE_PATH，装到脚本旁边
           npm install --no-save --no-package-lock --prefix scripts/screenshots playwright-core@1.56
-          CHROME=$(which google-chrome) node scripts/screenshots/shot.mjs "$PWD/demo" "$PWD/docs/screenshots"
+          CHROME=$(which google-chrome) node scripts/screenshots/shot.mjs "$PWD/demo" "$GITHUB_WORKSPACE/docs/screenshots"
       - uses: actions/upload-artifact@v4
         with:
           name: admin-screenshots
